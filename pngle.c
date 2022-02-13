@@ -88,12 +88,6 @@ struct _pngle_t {
 	uint32_t chunk_remain;
 	mz_ulong crc32;
 
-	// decompression state (reset on IHDR)
-	tinfl_decompressor inflator; // 11000 bytes
-	uint8_t lz_buf[TINFL_LZ_DICT_SIZE]; // 32768 bytes
-	uint8_t *next_out; // NULL indicates IDAT hasn't been processed yet
-	size_t  avail_out;
-
 	// scanline decoder (reset on every set_interlace_pass() call)
 	uint8_t *scanline_ringbuf;
 	size_t scanline_ringbuf_size;
@@ -106,18 +100,25 @@ struct _pngle_t {
 	// interlace
 	uint_fast8_t interlace_pass;
 
-	const char *error;
-
 #ifndef PNGLE_NO_GAMMA_CORRECTION
 	uint8_t *gamma_table;
 	double display_gamma;
 #endif
 
+	// callbacks
 	pngle_init_callback_t init_callback;
 	pngle_draw_callback_t draw_callback;
 	pngle_done_callback_t done_callback;
 
+	// misc
+	const char *error;
 	void *user_data;
+
+	// decompression state (reset on IHDR)
+	uint8_t *next_out; // NULL indicates IDAT hasn't been processed yet
+	size_t  avail_out;
+	tinfl_decompressor inflator; // 11000 bytes
+	uint8_t lz_buf[TINFL_LZ_DICT_SIZE]; // 32768 bytes
 };
 
 // magic
