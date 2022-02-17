@@ -1,2 +1,2 @@
 #define MINIZ_HEADER_FILE_ONLY
-#include "miniz.c"
+#include "../src/miniz.c"

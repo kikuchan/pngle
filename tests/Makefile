@@ -1,21 +1,21 @@
 CFLAGS+=-Os -std=c99
-CFLAGS += -I..
+CFLAGS += -I../include
 CFLAGS += -Wall -Wextra -Wno-misleading-indentation -Wno-unknown-warning-option
 # CFLAGS += -DPNGLE_NO_GAMMA_CORRECTION
 
-PNGLE_C=../pngle.c ../miniz.c
-PNGLE_H=../pngle.h ../miniz.h
+PNGLE_C=../src/pngle.c ../src/miniz.c
+PNGLE_H=../include/pngle.h ../include/miniz.h
 
-all: png2ppm info
+all: test
 
-png2ppm: ../examples/png2ppm.c $(PNGLE_C) $(PNGLE_H) Makefile
-	$(CC) $(CFLAGS) -o png2ppm ../examples/png2ppm.c $(PNGLE_C) -lm
+pngle-png2ppm: ../examples/pngle-png2ppm.c $(PNGLE_C) $(PNGLE_H) Makefile
+	$(CC) $(CFLAGS) -o pngle-png2ppm ../examples/pngle-png2ppm.c $(PNGLE_C) -lm
 
-info: info.c $(PNGLE_C) $(PNGLE_H) Makefile
-	$(CC) $(CFLAGS) -o info info.c $(PNGLE_C) -lm
+pngle-info: ../examples/pngle-info.c $(PNGLE_C) $(PNGLE_H) Makefile
+	$(CC) $(CFLAGS) -o pngle-info ../examples/pngle-info.c $(PNGLE_C) -lm
 
-test: png2ppm info
+test: pngle-png2ppm pngle-info
 	sh test.sh
 
 clean:
-	rm -f png2ppm info
+	rm -f pngle-png2ppm pngle-info
