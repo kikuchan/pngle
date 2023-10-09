@@ -66,6 +66,7 @@ typedef enum {
 	PNGLE_CHUNK_IEND = 0x49454e44UL, // IEND
 	PNGLE_CHUNK_tRNS = 0x74524e53UL, // tRNS
 	PNGLE_CHUNK_gAMA = 0x67414d41UL, // gAMA
+	PNGLE_CHUNK_bKGD = 0x424b4744UL, // bKGD
 } pngle_chunk_t;
 
 // typedef struct _pngle_t pngle_t; // declared in pngle.h
@@ -81,6 +82,9 @@ struct _pngle_t {
 	// tRNS chunk
 	size_t n_trans_palettes;
 	uint8_t *trans_palette;
+
+	// bKGD chunk
+	uint8_t background_color[3];
 
 	// parser state (reset on every chunk header)
 	pngle_state_t state;
@@ -153,6 +157,11 @@ static inline uint32_t U32_CLAMP_ADD(uint32_t a, uint32_t b, uint32_t top)
 	return v;
 }
 
+static inline uint16_t MAXVAL(pngle_t *pngle)
+{
+	uint8_t pixel_depth = (pngle->hdr.color_type & 1) ? 8 : pngle->hdr.depth;
+	return (1UL << pixel_depth) - 1;
+}
 
 void pngle_reset(pngle_t *pngle)
 {
@@ -225,7 +234,10 @@ uint32_t pngle_get_height(pngle_t *pngle)
 pngle_ihdr_t *pngle_get_ihdr(pngle_t *pngle)
 {
 	if (!pngle) return NULL;
-	if (pngle->channels == 0) return NULL;
+	if (pngle->channels == 0) {
+		(void)PNGLE_ERROR("No IHDR chunk is found");
+		return NULL;
+	}
 	return &pngle->hdr;
 }
 
@@ -246,7 +258,7 @@ static inline void scanline_ringbuf_push(pngle_t *pngle, uint8_t value)
 	pngle->scanline_ringbuf_cidx = (pngle->scanline_ringbuf_cidx + 1) % pngle->scanline_ringbuf_size;
 }
 
-static inline uint16_t get_value(pngle_t *pngle, size_t *ridx, int *bitcount, int depth)
+static inline uint16_t read_pixel_value(const uint8_t *buf, size_t *ridx, int *bitcount, int depth, size_t buf_size)
 {
 	uint16_t v;
 
@@ -256,42 +268,91 @@ static inline uint16_t get_value(pngle_t *pngle, size_t *ridx, int *bitcount, in
 	case 4:
 		if (*bitcount >= 8) {
 			*bitcount = 0;
-			*ridx = (*ridx + 1) % pngle->scanline_ringbuf_size;
+			*ridx = (*ridx + 1) % buf_size;
 		}
 		*bitcount += depth;
 		uint8_t mask = ((1UL << depth) - 1);
 		uint8_t shift = (8 - *bitcount);
-		return (pngle->scanline_ringbuf[*ridx] >> shift) & mask;
+		return (buf[*ridx] >> shift) & mask;
 
 	case 8:
-		v = pngle->scanline_ringbuf[*ridx];
-		*ridx = (*ridx + 1) % pngle->scanline_ringbuf_size;
+		v = buf[*ridx];
+		*ridx = (*ridx + 1) % buf_size;
 		return v;
 
 	case 16:
-		v = pngle->scanline_ringbuf[*ridx];
-		*ridx = (*ridx + 1) % pngle->scanline_ringbuf_size;
+		v = buf[*ridx];
+		*ridx = (*ridx + 1) % buf_size;
 
-		v = v * 0x100 + pngle->scanline_ringbuf[*ridx];
-		*ridx = (*ridx + 1) % pngle->scanline_ringbuf_size;
+		v = v * 0x100 + buf[*ridx];
+		*ridx = (*ridx + 1) % buf_size;
 		return v;
 	}
 
 	return 0;
 }
 
+static const uint8_t *adjust_color(pngle_t *pngle, uint16_t v[4])
+{
+	static uint8_t rgba[4];
+	uint16_t maxval = MAXVAL(pngle);
+
+	if (pngle->hdr.color_type & 2) {
+		// color
+		if (pngle->hdr.color_type & 1) {
+			// indexed color: type 3
+
+			// lookup palette info
+			uint16_t pidx = v[0];
+			if (pidx >= pngle->n_palettes) {
+				(void)PNGLE_ERROR("Color index is out of range");
+				return NULL;
+			}
+
+			v[0] = pngle->palette[pidx * 3 + 0];
+			v[1] = pngle->palette[pidx * 3 + 1];
+			v[2] = pngle->palette[pidx * 3 + 2];
+
+			// tRNS as an indexed alpha value table (for color type 3)
+			v[3] = pidx < pngle->n_trans_palettes ? pngle->trans_palette[pidx] : maxval;
+		} else {
+			// true color: 2, and 6
+			v[3] = (pngle->hdr.color_type & 4) ? v[3] : is_trans_color(pngle, v, 3) ? 0 : maxval;
+		}
+	} else {
+		// alpha, tRNS, or opaque
+		v[3] = (pngle->hdr.color_type & 4) ? v[1] : is_trans_color(pngle, v, 1) ? 0 : maxval;
+
+		// monochrome
+		v[1] = v[2] = v[0];
+	}
+
+	rgba[0] = (v[0] * 255 + maxval / 2) / maxval;
+	rgba[1] = (v[1] * 255 + maxval / 2) / maxval;
+	rgba[2] = (v[2] * 255 + maxval / 2) / maxval;
+	rgba[3] = (v[3] * 255 + maxval / 2) / maxval;
+
+#ifndef PNGLE_NO_GAMMA_CORRECTION
+	if (pngle->gamma_table) {
+		for (int i = 0; i < 3; i++) {
+			rgba[i] = pngle->gamma_table[v[i]];
+		}
+	}
+#endif
+
+	return rgba;
+}
+
 static int pngle_draw_pixels(pngle_t *pngle, size_t scanline_ringbuf_xidx)
 {
 	uint16_t v[4]; // MAX_CHANNELS
 	int bitcount = 0;
-	uint8_t pixel_depth = (pngle->hdr.color_type & 1) ? 8 : pngle->hdr.depth;
-	uint16_t maxval = (1UL << pixel_depth) - 1;
 
 	int n_pixels = pngle->hdr.depth == 16 ? 1 : (8 / pngle->hdr.depth);
 
 	for (; n_pixels-- > 0 && pngle->drawing_x < pngle->hdr.width; pngle->drawing_x = U32_CLAMP_ADD(pngle->drawing_x, interlace_div_x[pngle->interlace_pass], pngle->hdr.width)) {
 		for (uint_fast8_t c = 0; c < pngle->channels; c++) {
-			v[c] = get_value(pngle, &scanline_ringbuf_xidx, &bitcount, pngle->hdr.depth);
+			v[c] = read_pixel_value(pngle->scanline_ringbuf, &scanline_ringbuf_xidx, &bitcount, pngle->hdr.depth, pngle->scanline_ringbuf_size);
 		}
 
 		// color type: 0000 0111
@@ -299,49 +360,10 @@ static int pngle_draw_pixels(pngle_t *pngle, size_t scanline_ringbuf_xidx)
 		//                    ^--- Color
 		//                   ^---- Alpha channel
 
-		if (pngle->hdr.color_type & 2) {
-			// color
-			if (pngle->hdr.color_type & 1) {
-				// indexed color: type 3
-
-				// lookup palette info
-				uint16_t pidx = v[0];
-				if (pidx >= pngle->n_palettes) return PNGLE_ERROR("Color index is out of range");
-
-				v[0] = pngle->palette[pidx * 3 + 0];
-				v[1] = pngle->palette[pidx * 3 + 1];
-				v[2] = pngle->palette[pidx * 3 + 2];
-
-				// tRNS as an indexed alpha value table (for color type 3)
-				v[3] = pidx < pngle->n_trans_palettes ? pngle->trans_palette[pidx] : maxval;
-			} else {
-				// true color: 2, and 6
-				v[3] = (pngle->hdr.color_type & 4) ? v[3] : is_trans_color(pngle, v, 3) ? 0 : maxval;
-			}
-		} else {
-			// alpha, tRNS, or opaque
-			v[3] = (pngle->hdr.color_type & 4) ? v[1] : is_trans_color(pngle, v, 1) ? 0 : maxval;
-
-			// monochrome
-			v[1] = v[2] = v[0];
-		}
+		const uint8_t *rgba = adjust_color(pngle, v);
+		if (!rgba) return -1;
 
 		if (pngle->draw_callback) {
-			uint8_t rgba[4] = {
-				(v[0] * 255 + maxval / 2) / maxval,
-				(v[1] * 255 + maxval / 2) / maxval,
-				(v[2] * 255 + maxval / 2) / maxval,
-				(v[3] * 255 + maxval / 2) / maxval
-			};
-
-#ifndef PNGLE_NO_GAMMA_CORRECTION
-			if (pngle->gamma_table) {
-				for (int i = 0; i < 3; i++) {
-					rgba[i] = pngle->gamma_table[v[i]];
-				}
-			}
-#endif
-
 			pngle->draw_callback(pngle, pngle->drawing_x, pngle->drawing_y
 				, MIN(interlace_div_x[pngle->interlace_pass] - interlace_off_x[pngle->interlace_pass], pngle->hdr.width  - pngle->drawing_x)
 				, MIN(interlace_div_y[pngle->interlace_pass] - interlace_off_y[pngle->interlace_pass], pngle->hdr.height - pngle->drawing_y)
@@ -396,8 +418,7 @@ static int setup_gamma_table(pngle_t *pngle, uint32_t png_gamma)
 	if (pngle->display_gamma <= 0) return 0; // disable gamma correction
 	if (png_gamma == 0) return 0;
 
-	uint8_t pixel_depth = (pngle->hdr.color_type & 1) ? 8 : pngle->hdr.depth;
-	uint16_t maxval = (1UL << pixel_depth) - 1;
+	uint16_t maxval = MAXVAL(pngle);
 
 	pngle->gamma_table = PNGLE_CALLOC(1, maxval + 1, "gamma table");
 	if (!pngle->gamma_table) return PNGLE_ERROR("Insufficient memory");
@@ -557,9 +578,6 @@ static int pngle_handle_chunk(pngle_t *pngle, const uint8_t *buf, size_t len)
 		// interlace
 		if (set_interlace_pass(pngle, pngle->hdr.interlace ? 1 : 0) < 0) return -1;
 
-		// callback
-		if (pngle->init_callback) pngle->init_callback(pngle, pngle->hdr.width, pngle->hdr.height);
-
 		break;
 
 	case PNGLE_CHUNK_IDAT:
@@ -652,6 +670,31 @@ static int pngle_handle_chunk(pngle_t *pngle, const uint8_t *buf, size_t len)
 
 		break;
 
+	case PNGLE_CHUNK_bKGD:
+		switch (pngle->hdr.color_type) {
+		case 3: consume =     1; break;
+		case 0: consume = 2 * 1; break;
+		case 4: consume = 2 * 1; break;
+		case 2: consume = 2 * 3; break;
+		case 6: consume = 2 * 3; break;
+		default:
+			return PNGLE_ERROR("tRNS chunk is prohibited on the color type");
+		}
+		if (len < consume) return 0;
+
+		uint16_t v[4];
+		size_t ridx = 0;
+		int bitcount = 0;
+		for (size_t c = 0; c < consume; c++) {
+			v[c] = read_pixel_value(buf, &ridx, &bitcount, pngle->hdr.depth, len);
+		}
+
+		const uint8_t *rgba = adjust_color(pngle, v);
+		if (!rgba) return -1;
+
+		memcpy(pngle->background_color, rgba, 3);
+		break;
+
 	default:
 		// unknown chunk
 		consume = len;
@@ -713,6 +756,9 @@ static int pngle_feed_internal(pngle_t *pngle, const uint8_t *buf, size_t len)
 				// Very first IDAT
 				pngle->next_out = pngle->lz_buf;
 				pngle->avail_out = TINFL_LZ_DICT_SIZE;
+
+				// callback
+				if (pngle->init_callback) pngle->init_callback(pngle, pngle->hdr.width, pngle->hdr.height);
 			}
 			break;
 
@@ -872,6 +918,12 @@ void *pngle_get_user_data(pngle_t *pngle)
 {
 	if (!pngle) return NULL;
 	return pngle->user_data;
+}
+
+const uint8_t *pngle_get_background_color(pngle_t *pngle)
+{
+	if (!pngle) return NULL;
+	return pngle->background_color;
 }
 
 /* vim: set ts=4 sw=4 noexpandtab: */
