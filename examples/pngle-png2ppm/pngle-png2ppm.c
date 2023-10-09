@@ -10,39 +10,43 @@
 #include "pngle.h"
 
 uint8_t *img;
-uint8_t *counts; // draw counter on (x, y)
 int width, height;
-
-double scale_factor = 1.0;
+int scale_factor = 1;
 
 #define UNUSED(x) (void)(x)
 
-void put_pixel(int x, int y, uint8_t r, uint8_t g, uint8_t b)
+int transparent_background = 0;
+int alpha_blending = 0;
+
+void put_pixel(int x, int y, uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 {
+	if (x < 0 || y < 0 || x >= width || y >= height) return ;
+
 	uint8_t *p = img + (y * width + x) * 3;
-	uint8_t c = ++counts[y * width + x];
 
-	p[0] += (r - p[0]) / c;
-	p[1] += (g - p[1]) / c;
-	p[2] += (b - p[2]) / c;
-
+	if (alpha_blending) {
+		p[0] = r * a / 255 + p[0] * (255 - a) / 255;
+		p[1] = g * a / 255 + p[1] * (255 - a) / 255;
+		p[2] = b * a / 255 + p[2] * (255 - a) / 255;
+	} else {
+		p[0] = r;
+		p[1] = g;
+		p[2] = b;
+	}
 }
 
-void rectangle(double x, double y, double w, double h, uint8_t r, uint8_t g, uint8_t b)
+void rectangle(int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 {
-	int iw = (int)ceil(w);
-	int ih = (int)ceil(h);
-
 	int ix, iy;
 
-	for (iy = 0; iy < ih; iy++) {
-		for (ix = 0; ix < iw; ix++) {
-			put_pixel(x + ix, y + iy, r, g, b);
+	for (iy = 0; iy < h; iy++) {
+		for (ix = 0; ix < w; ix++) {
+			put_pixel(x + ix, y + iy, r, g, b, a);
 		}
 	}
 }
 
-void draw_pixel(pngle_t *pngle, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint8_t rgba[4])
+void draw_pixel(pngle_t *pngle, uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint8_t rgba[4])
 {
 	UNUSED(pngle);
 	UNUSED(w);
@@ -50,9 +54,9 @@ void draw_pixel(pngle_t *pngle, uint32_t x, uint32_t y, uint32_t w, uint32_t h, 
 	uint8_t r = rgba[0];
 	uint8_t g = rgba[1];
 	uint8_t b = rgba[2];
-	// uint8_t a = rgba[3]; // ignore
+	uint8_t a = rgba[3];
 
-	rectangle(x * scale_factor, y * scale_factor, scale_factor, scale_factor, r, g, b);
+	rectangle(x * scale_factor, y * scale_factor, scale_factor, scale_factor, r, g, b, a);
 }
 
 void init_screen(pngle_t *pngle, uint32_t w, uint32_t h)
@@ -62,7 +66,18 @@ void init_screen(pngle_t *pngle, uint32_t w, uint32_t h)
 	height = h * scale_factor;
 
 	img = calloc(width * height, 3);
-	counts = calloc(width * height, 1);
+
+	if (transparent_background) {
+		for (int iy = 0; iy < (height + 7) / 8; iy++) {
+			for (int ix = 0; ix < (width + 7) / 8; ix++) {
+				int c = (ix + iy) % 2 ? 128 : 64;;
+				rectangle(ix * 8, iy * 8, 8, 8, c, c, c, 255);
+			}
+		}
+	} else {
+		const uint8_t *bg = pngle_get_background_color(pngle);
+		if (bg) rectangle(0, 0, width, height, bg[0], bg[1], bg[2], 255);
+	}
 }
 
 void flush_screen(pngle_t *pngle) {
@@ -72,6 +87,9 @@ void flush_screen(pngle_t *pngle) {
 	printf("255\n");
 
 	fwrite(img, width * height, 3, stdout);
+
+	// for the next image if any
+	pngle_reset(pngle);
 }
 
 int main(int argc, char *argv[])
@@ -82,20 +100,38 @@ int main(int argc, char *argv[])
 	int ch;
 	double display_gamma = 0;
 
-	while ((ch = getopt(argc, argv, "g:s:h")) != -1) {
+	while ((ch = getopt(argc, argv, "g:s:ath")) != -1) {
 		switch (ch) {
 		case 'g':
 			display_gamma = atof(optarg);
 			break;
 
 		case 's':
-			scale_factor = atof(optarg);
+			scale_factor = atoi(optarg);
+			if (scale_factor < 1) {
+				fprintf(stderr, "The scale factor must be equal or greater than 1\n");
+				return 1;
+			}
+			break;
+
+		case 'a':
+			alpha_blending = 1;
+			break;
+
+		case 't':
+			transparent_background = 1;
+			alpha_blending = 1; // implicit
 			break;
 
 		case 'h':
 		case '?':
 		default:
 			fprintf(stderr, "Usage: %s [options] [input.png]\n", argv[0]);
+			fprintf(stderr, "  -g [gamma] : Gamma factor\n");
+			fprintf(stderr, "  -s [scale] : Scale factor (must be an integer)\n");
+			fprintf(stderr, "  -a         : Enable alpha blending\n");
+			fprintf(stderr, "  -t         : Transparent background (implies -a)\n");
+			fprintf(stderr, "  -h         : This help\n");
 			return 1;
 		}
 	}

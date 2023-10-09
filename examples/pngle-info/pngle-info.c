@@ -27,6 +27,10 @@ int main(int argc, char *argv[])
 	}
 
 	pngle_ihdr_t *ihdr = pngle_get_ihdr(pngle);
+	if (!ihdr) {
+		fprintf(stderr, "%s\n", pngle_error(pngle));
+		return -1;
+	}
 
 	fprintf(stderr, "%3d x %3d, colorType: %d, depth %2d, mode %c\n"
 		, ihdr->width

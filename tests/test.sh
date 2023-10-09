@@ -2,6 +2,7 @@
 
 exec 2>/dev/null
 
+error=0
 for i in pngsuite/*.png; do
 	echo -n "${i}: "
 	./pngle-info "$i" 2>&1 | tr '\n' ' '
@@ -13,5 +14,7 @@ for i in pngsuite/*.png; do
 		echo "... [32mPASS[m"
 	else
 		echo "... [31mFAILED[m"
+		error=1
 	fi
 done
+exit $error

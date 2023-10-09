@@ -55,6 +55,10 @@ This is why I reinvent the wheel for my own.
 5. In the `on_draw()` function, put the pixel on a screen (or wherever you want)
 6. Finally, you'll get an image
 
+## API
+
+See [src/pngle.h](src/pngle.h)
+
 ## Examples
 
 ### Generic C
@@ -93,13 +97,12 @@ int main(int argc, char *argv[])
 }
 ```
 
+See [examples/pngle-png2ppm/pngle-png2ppm.c](examples/pngle-png2ppm/pngle-png2ppm.c) for more practical example.
+
+
 ### Arduino (for M5Stack)
 
-See [examples/m5stack-png.ino](examples/m5stack-png.ino)
-
-## API
-
-See [pngle.h](pngle.h)
+See [examples/m5stack-png/m5stack-png.ino](examples/m5stack-png/m5stack-png.ino)
 
 
 ## Author

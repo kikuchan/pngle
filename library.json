@@ -18,8 +18,8 @@
   "export": {
     "include": [
         "src",
-        "examples/*.ino",
-        "examples/*.c"
+        "examples/**/*.ino",
+        "examples/**/*.c"
     ]
   },
   "frameworks": "*",
