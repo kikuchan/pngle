@@ -1,7 +1,12 @@
-.PHONY: all examples
+.PHONY: all test examples install-examples clean-examples
 
-all: tests
-	make -C tests
+all:
+
+test: tests
+	CC=cc CFLAGS=-std=c99 make -C tests clean test
+	CC=cc CFLAGS=-std=c11 make -C tests clean test
+	CC=c++ CFLAGS=-std=c++03 make -C tests clean test
+	CC=c++ CFLAGS=-std=c++11 make -C tests clean test
 
 examples:
 	make -C examples

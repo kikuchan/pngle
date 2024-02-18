@@ -1,8 +1,7 @@
-CFLAGS += -Os -std=c99
-CFLAGS += -g
-CFLAGS += -I../../src
-CFLAGS += -Wall -Wextra -Wno-misleading-indentation -Wno-unknown-warning-option
-# CFLAGS += -DPNGLE_NO_GAMMA_CORRECTION
+CFLAGS+=-Os
+CFLAGS+=-I../../src
+CFLAGS+=-Wall -Wextra -Wno-misleading-indentation -Wno-unknown-warning-option
+# CFLAGS+=-DPNGLE_NO_GAMMA_CORRECTION
 
 PNGLE_C=../../src/pngle.c ../../src/miniz.c
 PNGLE_H=../../src/pngle.h ../../src/miniz.h

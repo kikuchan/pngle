@@ -65,7 +65,7 @@ void init_screen(pngle_t *pngle, uint32_t w, uint32_t h)
 	width = w * scale_factor;
 	height = h * scale_factor;
 
-	img = calloc(width * height, 3);
+	img = (uint8_t *)calloc(width * height, 3);
 
 	if (transparent_background) {
 		for (int iy = 0; iy < (height + 7) / 8; iy++) {

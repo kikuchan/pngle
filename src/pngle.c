@@ -25,7 +25,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <stdint.h>
 #include <math.h>
 
 #include "miniz.h"
@@ -266,14 +265,16 @@ static inline uint16_t read_pixel_value(const uint8_t *buf, size_t *ridx, int *b
 	case 1:
 	case 2:
 	case 4:
-		if (*bitcount >= 8) {
-			*bitcount = 0;
-			*ridx = (*ridx + 1) % buf_size;
+		{
+			if (*bitcount >= 8) {
+				*bitcount = 0;
+				*ridx = (*ridx + 1) % buf_size;
+			}
+			*bitcount += depth;
+			const uint8_t mask = ((1UL << depth) - 1);
+			const uint8_t shift = (8 - *bitcount);
+			return (buf[*ridx] >> shift) & mask;
 		}
-		*bitcount += depth;
-		uint8_t mask = ((1UL << depth) - 1);
-		uint8_t shift = (8 - *bitcount);
-		return (buf[*ridx] >> shift) & mask;
 
 	case 8:
 		v = buf[*ridx];
@@ -398,7 +399,7 @@ static int set_interlace_pass(pngle_t *pngle, uint_fast8_t pass)
 	pngle->scanline_ringbuf_size = scanline_stride + bytes_per_pixel * 2; // 2 rooms for c/x and a
 
 	if (pngle->scanline_ringbuf) free(pngle->scanline_ringbuf);
-	if ((pngle->scanline_ringbuf = PNGLE_CALLOC(pngle->scanline_ringbuf_size, 1, "scanline ringbuf")) == NULL) return PNGLE_ERROR("Insufficient memory");
+	if ((pngle->scanline_ringbuf = (uint8_t *)PNGLE_CALLOC(pngle->scanline_ringbuf_size, 1, "scanline ringbuf")) == NULL) return PNGLE_ERROR("Insufficient memory");
 
 	pngle->drawing_x = interlace_off_x[pngle->interlace_pass];
 	pngle->drawing_y = interlace_off_y[pngle->interlace_pass];
@@ -420,7 +421,7 @@ static int setup_gamma_table(pngle_t *pngle, uint32_t png_gamma)
 
 	uint16_t maxval = MAXVAL(pngle);
 
-	pngle->gamma_table = PNGLE_CALLOC(1, maxval + 1, "gamma table");
+	pngle->gamma_table = (uint8_t *)PNGLE_CALLOC(1, maxval + 1, "gamma table");
 	if (!pngle->gamma_table) return PNGLE_ERROR("Insufficient memory");
 
 	for (int i = 0; i < maxval + 1; i++) {
@@ -580,49 +581,50 @@ static int pngle_handle_chunk(pngle_t *pngle, const uint8_t *buf, size_t len)
 
 		break;
 
-	case PNGLE_CHUNK_IDAT:
-		// parse & decode IDAT chunk
-		if (len < 1) return 0;
+	case PNGLE_CHUNK_IDAT: {
+			// parse & decode IDAT chunk
+			if (len < 1) return 0;
 
-		debug_printf("[pngle]   Reading IDAT (len %zd / chunk remain %u)\n", len, pngle->chunk_remain);
+			debug_printf("[pngle]   Reading IDAT (len %zd / chunk remain %u)\n", len, pngle->chunk_remain);
 
-		size_t in_bytes  = len;
-		size_t out_bytes = pngle->avail_out;
+			size_t in_bytes  = len;
+			size_t out_bytes = pngle->avail_out;
 
-		//debug_printf("[pngle]     in_bytes %zd, out_bytes %zd, next_out %p\n", in_bytes, out_bytes, pngle->next_out);
-
-		// XXX: tinfl_decompress always requires (next_out - lz_buf + avail_out) == TINFL_LZ_DICT_SIZE
-		tinfl_status status = tinfl_decompress(&pngle->inflator, (const mz_uint8 *)buf, &in_bytes, pngle->lz_buf, (mz_uint8 *)pngle->next_out, &out_bytes, TINFL_FLAG_HAS_MORE_INPUT | TINFL_FLAG_PARSE_ZLIB_HEADER);
-
-		//debug_printf("[pngle]       tinfl_decompress\n");
-		//debug_printf("[pngle]       => in_bytes %zd, out_bytes %zd, next_out %p, status %d\n", in_bytes, out_bytes, pngle->next_out, status);
-
-		if (status < TINFL_STATUS_DONE) {
-			// Decompression failed.
-			debug_printf("[pngle] tinfl_decompress() failed with status %d!\n", status);
-			return PNGLE_ERROR("Failed to decompress the IDAT stream");
-		}
-
-		pngle->next_out   += out_bytes;
-		pngle->avail_out  -= out_bytes;
-
-		// debug_printf("[pngle]         => avail_out %zd, next_out %p\n", pngle->avail_out, pngle->next_out);
-
-		if (status == TINFL_STATUS_DONE || pngle->avail_out == 0) {
-			// Output buffer is full, or decompression is done, so write buffer to output file.
-			// XXX: This is the only chance to process the buffer.
-			uint8_t *read_ptr = pngle->lz_buf;
-			size_t n = TINFL_LZ_DICT_SIZE - (size_t)pngle->avail_out;
-
-			// pngle_on_data() usually returns n, otherwise -1 on error
-			if (pngle_on_data(pngle, read_ptr, n) < 0) return -1;
+			//debug_printf("[pngle]     in_bytes %zd, out_bytes %zd, next_out %p\n", in_bytes, out_bytes, pngle->next_out);
 
 			// XXX: tinfl_decompress always requires (next_out - lz_buf + avail_out) == TINFL_LZ_DICT_SIZE
-			pngle->next_out = pngle->lz_buf;
-			pngle->avail_out = TINFL_LZ_DICT_SIZE;
-		}
+			tinfl_status status = tinfl_decompress(&pngle->inflator, (const mz_uint8 *)buf, &in_bytes, pngle->lz_buf, (mz_uint8 *)pngle->next_out, &out_bytes, TINFL_FLAG_HAS_MORE_INPUT | TINFL_FLAG_PARSE_ZLIB_HEADER);
 
-		consume = in_bytes;
+			//debug_printf("[pngle]       tinfl_decompress\n");
+			//debug_printf("[pngle]       => in_bytes %zd, out_bytes %zd, next_out %p, status %d\n", in_bytes, out_bytes, pngle->next_out, status);
+
+			if (status < TINFL_STATUS_DONE) {
+				// Decompression failed.
+				debug_printf("[pngle] tinfl_decompress() failed with status %d!\n", status);
+				return PNGLE_ERROR("Failed to decompress the IDAT stream");
+			}
+
+			pngle->next_out   += out_bytes;
+			pngle->avail_out  -= out_bytes;
+
+			// debug_printf("[pngle]         => avail_out %zd, next_out %p\n", pngle->avail_out, pngle->next_out);
+
+			if (status == TINFL_STATUS_DONE || pngle->avail_out == 0) {
+				// Output buffer is full, or decompression is done, so write buffer to output file.
+				// XXX: This is the only chance to process the buffer.
+				uint8_t *read_ptr = pngle->lz_buf;
+				size_t n = TINFL_LZ_DICT_SIZE - (size_t)pngle->avail_out;
+
+				// pngle_on_data() usually returns n, otherwise -1 on error
+				if (pngle_on_data(pngle, read_ptr, n) < 0) return -1;
+
+				// XXX: tinfl_decompress always requires (next_out - lz_buf + avail_out) == TINFL_LZ_DICT_SIZE
+				pngle->next_out = pngle->lz_buf;
+				pngle->avail_out = TINFL_LZ_DICT_SIZE;
+			}
+
+			consume = in_bytes;
+		}
 		break;
 
 	case PNGLE_CHUNK_PLTE:
@@ -671,28 +673,30 @@ static int pngle_handle_chunk(pngle_t *pngle, const uint8_t *buf, size_t len)
 		break;
 
 	case PNGLE_CHUNK_bKGD:
-		switch (pngle->hdr.color_type) {
-		case 3: consume =     1; break;
-		case 0: consume = 2 * 1; break;
-		case 4: consume = 2 * 1; break;
-		case 2: consume = 2 * 3; break;
-		case 6: consume = 2 * 3; break;
-		default:
-			return PNGLE_ERROR("tRNS chunk is prohibited on the color type");
+		{
+			switch (pngle->hdr.color_type) {
+			case 3: consume =     1; break;
+			case 0: consume = 2 * 1; break;
+			case 4: consume = 2 * 1; break;
+			case 2: consume = 2 * 3; break;
+			case 6: consume = 2 * 3; break;
+			default:
+				return PNGLE_ERROR("tRNS chunk is prohibited on the color type");
+			}
+			if (len < consume) return 0;
+
+			uint16_t v[4];
+			size_t ridx = 0;
+			int bitcount = 0;
+			for (size_t c = 0; c < consume; c++) {
+				v[c] = read_pixel_value(buf, &ridx, &bitcount, pngle->hdr.depth, len);
+			}
+
+			const uint8_t *rgba = adjust_color(pngle, v);
+			if (!rgba) return -1;
+
+			memcpy(pngle->background_color, rgba, 3);
 		}
-		if (len < consume) return 0;
-
-		uint16_t v[4];
-		size_t ridx = 0;
-		int bitcount = 0;
-		for (size_t c = 0; c < consume; c++) {
-			v[c] = read_pixel_value(buf, &ridx, &bitcount, pngle->hdr.depth, len);
-		}
-
-		const uint8_t *rgba = adjust_color(pngle, v);
-		if (!rgba) return -1;
-
-		memcpy(pngle->background_color, rgba, 3);
 		break;
 
 	default:
@@ -780,7 +784,7 @@ static int pngle_feed_internal(pngle_t *pngle, const uint8_t *buf, size_t len)
 
 			if (pngle->chunk_remain % 3) return PNGLE_ERROR("Invalid PLTE chunk size");
 			if (pngle->chunk_remain / 3 > MIN(256, (1UL << pngle->hdr.depth))) return PNGLE_ERROR("Too many palettes in PLTE");
-			if ((pngle->palette = PNGLE_CALLOC(pngle->chunk_remain / 3, 3, "palette")) == NULL) return PNGLE_ERROR("Insufficient memory");
+			if ((pngle->palette = (uint8_t *)PNGLE_CALLOC(pngle->chunk_remain / 3, 3, "palette")) == NULL) return PNGLE_ERROR("Insufficient memory");
 			pngle->n_palettes = 0;
 			break;
 
@@ -808,7 +812,7 @@ static int pngle_feed_internal(pngle_t *pngle, const uint8_t *buf, size_t len)
 			default:
 				return PNGLE_ERROR("tRNS chunk is prohibited on the color type");
 			}
-			if ((pngle->trans_palette = PNGLE_CALLOC(pngle->chunk_remain, 1, "trans palette")) == NULL) return PNGLE_ERROR("Insufficient memory");
+			if ((pngle->trans_palette = (uint8_t *)PNGLE_CALLOC(pngle->chunk_remain, 1, "trans palette")) == NULL) return PNGLE_ERROR("Insufficient memory");
 			pngle->n_trans_palettes = 0;
 			break;
 
@@ -819,40 +823,43 @@ static int pngle_feed_internal(pngle_t *pngle, const uint8_t *buf, size_t len)
 		return 8;
 
 	case PNGLE_STATE_HANDLE_CHUNK:
-		len = MIN(len, pngle->chunk_remain);
+		{
+			len = MIN(len, pngle->chunk_remain);
 
-		int consumed = pngle_handle_chunk(pngle, buf, len);
+			int consumed = pngle_handle_chunk(pngle, buf, len);
 
-		if (consumed > 0) {
-			if (pngle->chunk_remain < (uint32_t)consumed) return PNGLE_ERROR("Chunk data has been consumed too much");
+			if (consumed > 0) {
+				if (pngle->chunk_remain < (uint32_t)consumed) return PNGLE_ERROR("Chunk data has been consumed too much");
 
-			pngle->chunk_remain -= consumed;
-			pngle->crc32 = mz_crc32(pngle->crc32, (const mz_uint8 *)buf, consumed);
+				pngle->chunk_remain -= consumed;
+				pngle->crc32 = mz_crc32(pngle->crc32, (const mz_uint8 *)buf, consumed);
+			}
+			if (pngle->chunk_remain <= 0) pngle->state = PNGLE_STATE_CRC;
+
+			return consumed;
 		}
-		if (pngle->chunk_remain <= 0) pngle->state = PNGLE_STATE_CRC;
-
-		return consumed;
 
 	case PNGLE_STATE_CRC:
-		if (len < 4) return 0;
+		{
+			if (len < 4) return 0;
 
-		uint32_t crc32 = read_uint32(buf);
+			uint32_t crc32 = read_uint32(buf);
 
-		if (crc32 != pngle->crc32) {
-			debug_printf("[pngle] CRC: %08x vs %08x => NG\n", crc32, (uint32_t)pngle->crc32);
-			return PNGLE_ERROR("CRC mismatch");
+			if (crc32 != pngle->crc32) {
+				debug_printf("[pngle] CRC: %08x vs %08x => NG\n", crc32, (uint32_t)pngle->crc32);
+				return PNGLE_ERROR("CRC mismatch");
+			}
+
+			debug_printf("[pngle] CRC: %08x vs %08x => OK\n", crc32, (uint32_t)pngle->crc32);
+			pngle->state = PNGLE_STATE_FIND_CHUNK_HEADER;
+
+			// XXX:
+			if (pngle->chunk_type == PNGLE_CHUNK_IEND) {
+				pngle->state = PNGLE_STATE_EOF;
+				if (pngle->done_callback) pngle->done_callback(pngle);
+				debug_printf("[pngle] DONE\n");
+			}
 		}
-
-		debug_printf("[pngle] CRC: %08x vs %08x => OK\n", crc32, (uint32_t)pngle->crc32);
-		pngle->state = PNGLE_STATE_FIND_CHUNK_HEADER;
-
-		// XXX:
-		if (pngle->chunk_type == PNGLE_CHUNK_IEND) {
-			pngle->state = PNGLE_STATE_EOF;
-			if (pngle->done_callback) pngle->done_callback(pngle);
-			debug_printf("[pngle] DONE\n");
-		}
-
 		return 4;
 
 	default:
