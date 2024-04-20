@@ -15,6 +15,13 @@
   ],
   "license": "MIT",
   "homepage": "https://github.com/kikuchan/pngle",
+  "export": {
+    "include": [
+        "src",
+        "examples/*.ino",
+        "examples/*.c"
+    ]
+  },
   "frameworks": "*",
   "platforms": "*"
 }
