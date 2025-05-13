@@ -121,6 +121,8 @@ struct _pngle_t {
 	uint8_t lz_buf[TINFL_LZ_DICT_SIZE]; // 32768 bytes
 };
 
+const size_t PNGLE_T_SIZE = sizeof(pngle_t);
+
 // magic
 static const uint8_t png_sig[] = { 137, 80, 78, 71, 13, 10, 26, 10 };
 static uint32_t interlace_off_x[8] = { 0,  0, 4, 0, 2, 0, 1, 0 };
