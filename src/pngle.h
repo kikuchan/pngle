@@ -34,6 +34,8 @@ extern "C" {
 // Main Pngle object
 typedef struct _pngle_t pngle_t;
 
+extern const size_t PNGLE_T_SIZE;  // size of pngle_t structure
+
 // Callback signatures
 typedef void (*pngle_init_callback_t)(pngle_t *pngle, uint32_t w, uint32_t h);
 typedef void (*pngle_draw_callback_t)(pngle_t *pngle, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint8_t rgba[4]);
